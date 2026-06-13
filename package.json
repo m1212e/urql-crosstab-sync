@@ -1,7 +1,7 @@
 {
   "name": "@m1212e/urql-crosstab-sync",
   "module": "./out/index.mjs",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "description": "A urql exchange that mirrors mutations and query results between same-origin browser tabs over BroadcastChannel, keeping graphcache state (including optimistic updates) in sync.",
   "keywords": [
