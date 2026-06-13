@@ -66,6 +66,7 @@ crossTabSyncExchange({
   shouldSync: (op) => true,          // predicate to opt operations out of sync
   syncMutations: true,
   syncQueries: true,
+  debug: false,                      // `true` → console.debug, or pass `(event, data) => ...`
 });
 ```
 

@@ -4,6 +4,7 @@ import type { Source } from "wonka";
 import { makeSubject, pipe, subscribe } from "wonka";
 
 import { generateId } from "./env.ts";
+import type { Logger } from "./logger.ts";
 import { getCrossTabMeta } from "./operation.ts";
 import type { Message } from "./protocol.ts";
 import { deserializeError } from "./protocol.ts";
@@ -35,6 +36,7 @@ export interface ReceiverConfig {
   client: Client;
   syncMutations: boolean;
   syncQueries: boolean;
+  log: Logger;
 }
 
 type ResultBuilder = (op: Operation) => OperationResult;
@@ -43,6 +45,7 @@ export function createReceiver({
   client,
   syncMutations,
   syncQueries,
+  log,
 }: ReceiverConfig): Receiver {
   const subject = makeSubject<OperationResult>();
   /** Synthetic remote ops awaiting a result message. */
@@ -56,9 +59,14 @@ export function createReceiver({
     const op = pendingOps.get(txId);
     if (op) {
       pendingOps.delete(txId);
+      log("receiver:result:emit", { txId, opKey: op.key, kind: op.kind });
       subject.next(build(op));
       tearDown(txId);
     } else {
+      log("receiver:result:park", {
+        txId,
+        reason: "synthetic op not yet observed",
+      });
       earlyResults.set(txId, build);
     }
   }
@@ -67,7 +75,13 @@ export function createReceiver({
   function tearDown(txId: string): void {
     const teardown = subscriptions.get(txId);
     subscriptions.delete(txId);
-    if (teardown) setTimeout(teardown, 0);
+    if (teardown) {
+      log("receiver:sub:teardown:schedule", { txId });
+      setTimeout(() => {
+        log("receiver:sub:teardown:run", { txId });
+        teardown();
+      }, 0);
+    }
   }
 
   function dispatchSynthetic(
@@ -79,31 +93,58 @@ export function createReceiver({
     let req: ReturnType<typeof createRequest>;
     try {
       req = createRequest(query, variables);
-    } catch {
+    } catch (err) {
+      log("receiver:dispatch:parse-failed", { txId, kind, error: String(err) });
       return;
     }
     const op = client.createRequestOperation(kind, req, {
       crossTabSync: { remote: true, txId },
       ...(kind === "query" ? { requestPolicy: "network-only" as const } : {}),
     });
+    log("receiver:dispatch", {
+      txId,
+      kind,
+      opKey: op.key,
+      requestPolicy: op.context.requestPolicy,
+    });
     const sub = pipe(
       client.executeRequestOperation(op),
       // No-op consumer; keeps the operation "active" so the synthesized
       // result is routed to graphcache and any real subscribers.
-      subscribe(() => {}),
+      subscribe((result) => {
+        log("receiver:dispatch:result-seen", {
+          txId,
+          opKey: result.operation.key,
+          hasError: !!result.error,
+          hasData: result.data !== undefined,
+        });
+      }),
     );
     subscriptions.set(txId, () => sub.unsubscribe());
   }
 
   function handleMessage(msg: Message): void {
+    log("receiver:message", msg);
     switch (msg.type) {
       case "mutation:start": {
-        if (!syncMutations) return;
+        if (!syncMutations) {
+          log("receiver:skip", {
+            reason: "syncMutations=false",
+            txId: msg.txId,
+          });
+          return;
+        }
         dispatchSynthetic("mutation", msg.query, msg.variables, msg.txId);
         return;
       }
       case "mutation:result": {
-        if (!syncMutations) return;
+        if (!syncMutations) {
+          log("receiver:skip", {
+            reason: "syncMutations=false",
+            txId: msg.txId,
+          });
+          return;
+        }
         deliver(msg.txId, (op) => ({
           operation: op,
           data: msg.data,
@@ -115,7 +156,13 @@ export function createReceiver({
         return;
       }
       case "mutation:error": {
-        if (!syncMutations) return;
+        if (!syncMutations) {
+          log("receiver:skip", {
+            reason: "syncMutations=false",
+            txId: msg.txId,
+          });
+          return;
+        }
         deliver(msg.txId, (op) => ({
           operation: op,
           data: undefined,
@@ -127,8 +174,12 @@ export function createReceiver({
         return;
       }
       case "query:result": {
-        if (!syncQueries) return;
+        if (!syncQueries) {
+          log("receiver:skip", { reason: "syncQueries=false" });
+          return;
+        }
         const txId = generateId();
+        log("receiver:query:assign-tx", { txId });
         // Stash the builder first; it'll be applied when the synthetic op
         // is observed flowing through the exchange.
         earlyResults.set(txId, (op) => ({
@@ -151,6 +202,7 @@ export function createReceiver({
     const { txId } = meta;
 
     if (op.kind === "teardown") {
+      log("receiver:observe:teardown", { txId, opKey: op.key });
       pendingOps.delete(txId);
       earlyResults.delete(txId);
       const teardown = subscriptions.get(txId);
@@ -161,19 +213,35 @@ export function createReceiver({
 
     const build = earlyResults.get(txId);
     if (build) {
+      log("receiver:observe:apply-early-result", {
+        txId,
+        opKey: op.key,
+        kind: op.kind,
+      });
       earlyResults.delete(txId);
       // Defer so graphcache finishes processing the op (e.g. running its
       // optimistic config) before the synthesized result arrives.
       queueMicrotask(() => {
+        log("receiver:result:emit", { txId, opKey: op.key, kind: op.kind });
         subject.next(build(op));
         tearDown(txId);
       });
     } else {
+      log("receiver:observe:park-op", {
+        txId,
+        opKey: op.key,
+        kind: op.kind,
+      });
       pendingOps.set(txId, op);
     }
   }
 
   function dispose(): void {
+    log("receiver:dispose", {
+      pendingOps: pendingOps.size,
+      earlyResults: earlyResults.size,
+      subscriptions: subscriptions.size,
+    });
     pendingOps.clear();
     earlyResults.clear();
     for (const teardown of subscriptions.values()) teardown();
