@@ -21,5 +21,18 @@
     "lefthook": "^2.1.9",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3"
+  },
+  "peerDependencies": {
+    "@urql/core": "^6",
+    "wonka": "^6"
+  },
+  "main": "./out/index.cjs",
+  "types": "./out/index.d.cts",
+  "exports": {
+    ".": {
+      "import": "./out/index.mjs",
+      "require": "./out/index.cjs"
+    },
+    "./package.json": "./package.json"
   }
 }
