@@ -1,0 +1,25 @@
+{
+  "name": "@m1212e/urql-crosstab-sync",
+  "module": "./out/index.mjs",
+  "version": "0.0.0",
+  "type": "module",
+  "repository": "https://github.com/m1212e/urql-crosstab-sync",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "Apache-2.0",
+  "scripts": {
+    "format": "bun run lint",
+    "lint": "bunx biome check --write .",
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
+    "@types/bun": "^1.3.14",
+    "@types/node": "^25.9.1",
+    "lefthook": "^2.1.9",
+    "tsdown": "^0.22.2",
+    "typescript": "^6.0.3"
+  }
+}
